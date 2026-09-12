@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "openai-codex": {
+      "command": "cmd.exe",
+      "args": ["/c", "codex", "mcp-server"],
+      "env": {}
+    }
+  }
+}

@@ -1,0 +1,116 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ──────────────────────────────────────────────────────────────────
+    // Helper functions
+    // ──────────────────────────────────────────────────────────────────
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'admin@wanderly.com' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Stay Provider check: role is 'stay_provider' or legacy 'hotel_provider'
+    function isProvider() {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'stay_provider' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'hotel_provider'
+      );
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // trips collection
+    // ──────────────────────────────────────────────────────────────────
+    match /trips/{tripId} {
+      // Public read for shared trip blueprints; private trips are filtered client-side
+      allow read: if true;
+
+      // Any authenticated user can create a trip
+      allow create: if isAuthenticated();
+
+      // Only trip owner or admin can update/delete
+      allow update, delete: if isAdmin() ||
+        (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // culturalInfo collection
+    // Stores saved Cultural & Heritage guides per user.
+    // ──────────────────────────────────────────────────────────────────
+    match /culturalInfo/{docId} {
+      // Authenticated users can read their own cultural info
+      allow read: if isAuthenticated() &&
+        (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+
+      // Only the owner can create/update their own cultural info
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid;
+
+      allow update: if isAuthenticated() &&
+        resource.data.userId == request.auth.uid;
+
+      allow delete: if isAuthenticated() &&
+        (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // users collection
+    // Stores user profiles, roles (traveler, stay_provider, admin),
+    // providerInfo, banned flag, etc.
+    // ──────────────────────────────────────────────────────────────────
+    match /users/{userId} {
+      // Any authenticated user can read profiles (needed for admin lookups)
+      allow read: if isAuthenticated();
+
+      // Users can create/update their own document; admins can update any user
+      allow create: if isOwner(userId) || isAdmin();
+
+      allow update: if isOwner(userId) || isAdmin();
+
+      // Only admins can delete user records
+      allow delete: if isAdmin();
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // accommodations collection
+    // Hotels, homestays, hostels, resorts, govt stays, eco-stays, etc.
+    // ──────────────────────────────────────────────────────────────────
+    match /accommodations/{accId} {
+      // Public read: travelers & AI agent can read all listings
+      // (client code filters by status === "approved" for public views)
+      allow read: if true;
+
+      // Only authenticated users (stay providers) can create listings
+      allow create: if isAuthenticated();
+
+      // Listing owner (stay provider) can update their own listing
+      // Admins can update any listing (for approval/rejection/suspension)
+      allow update: if isAdmin() ||
+        (isAuthenticated() && resource.data.createdBy == request.auth.uid);
+
+      // Only listing owner or admin can delete
+      allow delete: if isAdmin() ||
+        (isAuthenticated() && resource.data.createdBy == request.auth.uid);
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Deny all access to any unlisted collections
+    // ──────────────────────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
